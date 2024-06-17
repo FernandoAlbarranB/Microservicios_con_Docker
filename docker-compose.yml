@@ -1,0 +1,255 @@
+# version: '3'
+
+services:
+
+  router1:
+    image: ubuntu:latest
+    container_name: router01
+    hostname: router
+    networks:
+      LAN_PRIVADA:
+        ipv4_address: 172.20.1.3
+      LAN_DMZ:
+        ipv4_address: 172.20.2.3
+      LAN_EXT:
+        ipv4_address: 172.20.3.3
+      LAN_EXT2:
+        ipv4_address: 172.20.4.3
+    stdin_open: true
+    tty: true
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    command:
+      - /bin/sh
+      - -c
+      - |
+        apt update
+        apt install -y inetutils-ping
+        apt install -y net-tools
+        apt install -y curl
+        apt install -y nano
+        apt install -y iproute2
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get install -y ufw
+        ufw default allow routed
+        ufw default allow incoming
+        ufw enable
+        echo "PREPARADO ROUTER"
+        /bin/bash
+
+
+
+  php:
+    image: php:8.3.7-apache-bullseye
+    container_name: php
+    hostname: php
+    volumes:
+      - /home/tfguser/Documentos/TFG/servicioweb:/var/www/html
+    environment:
+      REDIS_HOST: cache
+      REDIS_PORT: 6379
+    stdin_open: true
+    tty: true
+    cap_add:
+      - NET_ADMIN
+    ports:
+      - "8082:80"
+    depends_on:
+      - basedatos
+      - cache
+    networks:
+      LAN_DMZ:
+        ipv4_address: 172.20.2.4
+    command:
+      - /bin/sh
+      - -c
+      - |
+        apt-get update
+        apt-get install -y libzip-dev zlib1g-dev inetutils-ping net-tools nano iproute2
+        docker-php-ext-install mysqli
+        docker-php-ext-install zip
+        rm -rf /var/lib/apt/lists/*
+        a2enmod rewrite
+        pecl channel-update pecl.php.net
+        ip route add 172.20.3.0/24 via 172.20.2.3
+        ip route add 172.20.4.0/24 via 172.20.2.3
+        pecl install -f redis < /dev/null
+        docker-php-ext-enable redis
+        echo "extension=redis.so" > /usr/local/etc/php/conf.d/redis.ini
+        apachectl -D FOREGROUND
+
+
+
+
+
+  basedatos:
+    image: mysql:5.7-debian
+    container_name: mysql
+    hostname: mysql
+    ports:
+      - "3306:3306"
+    stdin_open: true
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: basedatos
+      MYSQL_USER: usuario
+      MYSQL_PASSWORD: 1234
+    volumes:
+      - /home/tfguser/Documentos/TFG/BBDD/mysql.data:/var/lib/mysql:rw
+    networks:
+      LAN_DMZ:
+        ipv4_address: 172.20.2.5
+
+
+
+  phpyadmin:
+    image: phpmyadmin/phpmyadmin
+    container_name: phpmyadmin
+    hostname: phpmyadmin
+    ports:
+      - "8081:80"
+    environment:
+      - PMA_HOST=basedatos
+    stdin_open: true
+    depends_on:
+      - basedatos
+    networks:
+      LAN_DMZ:
+        ipv4_address: 172.20.2.6
+
+
+
+  cache:
+    image: redis:alpine
+    container_name: redis
+    hostname: redis
+    ports: 
+        - "6379:6379"
+    restart: unless-stopped
+    networks:
+      LAN_DMZ:
+        ipv4_address: 172.20.2.7        
+     
+        
+        
+  grafana:
+    image: grafana/grafana:8.0.6
+    container_name: grafana
+    hostname: grafana
+    ports:
+      - "3000:3000"
+    networks:
+      LAN_DMZ:
+        ipv4_address: 172.20.2.8
+
+
+
+  prometheus:
+    image: prom/prometheus
+    container_name: prometheus
+    hostname: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - /home/tfguser/Documentos/TFG/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks:
+      LAN_DMZ:
+        ipv4_address: 172.20.2.9
+
+
+  redis-exporter:
+    image: oliver006/redis_exporter
+    container_name: redis-exporter
+    hostname: redis-exporter
+    ports:
+      - 9121:9121
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: "redis:6379"
+      REDIS_USER: null
+      REDIS_PASSWORD: null
+    networks:
+      LAN_DMZ:
+        ipv4_address: 172.20.2.10
+
+
+
+  metasploitable_container:
+    image: tleemcjr/metasploitable2:latest
+    container_name: metasploitable_container
+    hostname: metasploitable
+    networks:
+      LAN_EXT:
+        ipv4_address: 172.20.3.4
+    stdin_open: true
+    tty: true
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    command:
+      - /bin/sh
+      - -c
+      - |
+        apt-get update
+        apt-get install -y inetutils-ping
+        apt-get install -y net-tools
+        apt-get install -y iproute
+        apt-get install -y nmap
+        apt-get install -y curl
+        ip route add 172.20.2.0/24 via 172.20.3.3
+        ip route add 172.20.4.0/24 via 172.20.3.3
+        services.sh
+        echo "PREPARADO METASPLOITABLE"
+        /bin/bash
+
+
+
+  parrot:
+    image: parrotsec/security:latest
+    container_name: parrot
+    hostname: parrot
+    networks:
+      LAN_EXT2:
+        ipv4_address: 172.20.4.4
+    stdin_open: true
+    tty: true
+    cap_add:
+      - NET_RAW
+      - NET_ADMIN
+    entrypoint: /bin/bash
+    command: >
+      -c "ip route add 172.20.2.0/24 via 172.20.4.3 &&
+      ip route add 172.20.3.0/24 via 172.20.4.3 &&
+      echo 'PREPARADO PARROT' &&
+      /bin/bash"
+      /bin/bash
+
+
+
+
+
+networks:
+  LAN_PRIVADA:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.1.0/24
+
+  LAN_DMZ:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.2.0/24
+
+  LAN_EXT:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.3.0/24
+
+  LAN_EXT2:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.4.0/24
